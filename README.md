@@ -2,13 +2,22 @@
 
 A Nonogram (Picross) plugin for [KOReader](https://github.com/koreader/koreader).
 
+
+## Screenshot
+
+*(Screenshot to be added.)*
+
+## Rules
+
+Fill cells to match the clue numbers on each row and column. Each clue number is a consecutive run of filled cells; multiple numbers mean multiple runs (in order) with at least one gap between each. Deduce which cells to fill using both row and column constraints.
+
 ## Concept
 
 Nonograms are logic puzzles where you fill cells in a grid according to numeric clues
 on each row and column. The clues indicate the lengths of consecutive filled-cell groups
 in that line. Solving the puzzle reveals a pixel-art picture.
 
-## Planned Features
+## Features
 
 - **Multiple grid sizes** — 5×5, 10×10, 15×15, 20×20
 - **Three difficulty levels** — Easy, Medium, Hard
@@ -30,6 +39,7 @@ in that line. Solving the puzzle reveals a pixel-art picture.
 | New game | Tap **New game** |
 | Change grid size | Tap **Grid** |
 | Change difficulty | Tap **Diff** |
+| Show rules | Tap **Rules** |
 
 ## Why e-ink friendly?
 

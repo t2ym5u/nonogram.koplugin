@@ -29,6 +29,30 @@ local SIZES         = board_module.SIZES
 
 local DeviceScreen = Device.screen
 
+local GAME_RULES_EN = _([[
+Nonogram (Picross) — Rules
+
+Fill in cells to match the clue numbers for each row and column.
+
+Each clue number represents one consecutive run of filled cells.
+Multiple numbers in a clue mean multiple separate runs, in order from top/left to bottom/right, with at least one empty cell between each run.
+
+Tap a cell to fill it. Long-press (or tap in cross mode) to mark a cell as definitely empty.
+Solve the puzzle by satisfying all row and column clues simultaneously.
+]])
+
+local GAME_RULES_FR = [[
+Nonogramme (Picross) — Règles
+
+Remplissez les cases pour correspondre aux indices de chaque ligne et colonne.
+
+Chaque nombre d'indice représente une séquence consécutive de cases remplies.
+Plusieurs nombres dans un indice signifient plusieurs séquences séparées, dans l'ordre de haut en bas ou de gauche à droite, avec au moins une case vide entre chaque séquence.
+
+Appuyez sur une case pour la remplir. Appui long (ou en mode croix) pour marquer une case comme définitivement vide.
+Résolvez le puzzle en satisfaisant simultanément tous les indices de lignes et de colonnes.
+]]
+
 local NonogramScreen = ScreenBase:extend{}
 
 function NonogramScreen:init()
@@ -83,7 +107,8 @@ function NonogramScreen:buildLayout()
                 { id = "diff_button",  text = self:getDiffButtonText(),
                   callback = function() self:openDifficultyMenu() end },
                 { text = _("Reveal"),  callback = function() self:onReveal() end },
-                self:makeCloseButtonConfig(),
+                self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
+            self:makeCloseButtonConfig(),
             },
         },
     }
