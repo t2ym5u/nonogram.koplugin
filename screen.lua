@@ -96,24 +96,15 @@ function NonogramScreen:buildLayout()
         and math.max(right_panel_width - Size.span.horizontal_default, 100)
         or  math.floor(sw * 0.9)
 
-    local top_buttons = ButtonTable:new{
-        shrink_unneeded_width = true,
-        width   = button_width,
-        buttons = {
-            {
-                { text = _("New game"), callback = function() self:onNewGame() end },
-                { id = "grid_button",  text = self:getGridButtonText(),
-                  callback = function() self:openGridMenu() end },
-                { id = "diff_button",  text = self:getDiffButtonText(),
-                  callback = function() self:openDifficultyMenu() end },
-                { text = _("Reveal"),  callback = function() self:onReveal() end },
-                self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
-                self:makeCloseButtonConfig(),
-            },
-        },
-    }
-    self.grid_button = top_buttons:getButtonById("grid_button")
-    self.diff_button = top_buttons:getButtonById("diff_button")
+    local title_bar = self:buildTitleBar(_("Nonogram"), function()
+        return {
+            { text = _("New game"),            callback = function() self:onNewGame() end },
+            { text = self:getGridButtonText(), callback = function() self:openGridMenu() end },
+            { text = self:getDiffButtonText(), callback = function() self:openDifficultyMenu() end },
+            { text = _("Reveal"),              callback = function() self:onReveal() end },
+            self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
+        }
+    end)
 
     local control_buttons = ButtonTable:new{
         shrink_unneeded_width = true,
@@ -137,18 +128,17 @@ function NonogramScreen:buildLayout()
     if is_landscape then
         local right_panel = VerticalGroup:new{
             align = "center",
-            top_buttons,
-            VerticalSpan:new{ width = Size.span.vertical_large },
             self.status_text,
             VerticalSpan:new{ width = Size.span.vertical_large },
             control_buttons,
         }
-        self.layout = HorizontalGroup:new{
+        local content = HorizontalGroup:new{
             align = "center",
             board_frame,
             HorizontalSpan:new{ width = Size.span.horizontal_default },
             right_panel,
         }
+        self:buildLandscapeLayout(title_bar, content)
     else
         local content = VerticalGroup:new{
             align = "center",
@@ -156,9 +146,8 @@ function NonogramScreen:buildLayout()
             VerticalSpan:new{ width = Size.span.vertical_large },
             self.status_text,
         }
-        self:buildPortraitLayout(top_buttons, content, control_buttons)
+        self:buildPortraitLayout(title_bar, content, control_buttons)
     end
-    self[1] = self.layout
     self:updateStatus()
 end
 
