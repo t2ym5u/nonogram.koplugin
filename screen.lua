@@ -8,8 +8,10 @@ local function lrequire(name)
 end
 
 local ButtonTable     = require("ui/widget/buttontable")
+local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
+local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local Size            = require("ui/size")
@@ -96,6 +98,17 @@ function NonogramScreen:buildLayout()
         and math.max(right_panel_width - Size.span.horizontal_default, 100)
         or  math.floor(sw * 0.9)
 
+    local status_width = is_landscape and button_width or board_total
+    self.status_text:setMaxWidth(status_width)
+    -- Centred in a fixed-width CenterContainer matching the board: a plain
+    -- VerticalGroup caches its children's widths the first time it's
+    -- measured and never re-centres them afterwards, so the status text
+    -- would drift off-center as it keeps changing width (see 2048.koplugin).
+    local status_container = CenterContainer:new{
+        dimen = Geom:new{ w = status_width, h = self.status_text:getSize().h },
+        self.status_text,
+    }
+
     local title_bar = self:buildTitleBar(_("Nonogram"), function()
         return {
             { text = _("New game"),            callback = function() self:onNewGame() end },
@@ -128,7 +141,7 @@ function NonogramScreen:buildLayout()
     if is_landscape then
         local right_panel = VerticalGroup:new{
             align = "center",
-            self.status_text,
+            status_container,
             VerticalSpan:new{ width = Size.span.vertical_large },
             control_buttons,
         }
@@ -144,7 +157,7 @@ function NonogramScreen:buildLayout()
             align = "center",
             board_frame,
             VerticalSpan:new{ width = Size.span.vertical_large },
-            self.status_text,
+            status_container,
         }
         self:buildPortraitLayout(title_bar, content, control_buttons)
     end
@@ -180,9 +193,8 @@ function NonogramScreen:onNewGame()
     self.board = NonogramBoard:new{ n = n, difficulty = diff }
     self.board:generate(diff)
     self.plugin:saveState(self.board:serialize())
-    self.board_widget.board = self.board
-    self.board_widget:refresh()
-    self:updateUndoButton()
+    self:buildLayout()
+    UIManager:setDirty(self, function() return "ui", self.dimen end)
     self:updateStatus(_("New game started."))
 end
 
