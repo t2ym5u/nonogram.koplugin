@@ -131,7 +131,7 @@ function NonogramBoardWidget:paintTo(bb, x, y)
             local txt = tostring(clue[i])
             local m = RenderText:sizeUtf8Text(0, math.floor(cw), face, txt, true, false)
             local tx = cell_cx - math.floor(m.x / 2)
-            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2) - m.y_top
+            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2)
             RenderText:renderUtf8Text(bb, tx, ty, face, txt, true, false, text_color)
         end
     end
@@ -149,7 +149,7 @@ function NonogramBoardWidget:paintTo(bb, x, y)
             local txt = tostring(clue[i])
             local m = RenderText:sizeUtf8Text(0, math.floor(cw), face, txt, true, false)
             local tx = cell_cx - math.floor(m.x / 2)
-            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2) - m.y_top
+            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2)
             RenderText:renderUtf8Text(bb, tx, ty, face, txt, true, false, text_color)
         end
     end
