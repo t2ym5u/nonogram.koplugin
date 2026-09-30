@@ -1,5 +1,6 @@
 local UndoStack  = require("undo_stack")
 local grid_utils = require("grid_utils")
+local Hint      = require("hint")
 
 local SIZES = { 5, 10, 15 }
 
@@ -350,6 +351,18 @@ function NonogramBoard:getRemainingCells()
     end
     return count
 end
+
+-- Only filled cells matter: an X is an optional annotation, so a cell the
+-- solution leaves blank is reported as "empty" and never offered as a hint,
+-- and equals() compares filled-ness rather than the exact state.
+Hint.install(NonogramBoard, {
+    getUser     = function(b, r, c) return b.user[r][c] end,
+    getSolution = function(b, r, c) return b.solution[r][c] and 1 or 0 end,
+    isEmpty     = function(v) return v == 0 end,
+    equals      = function(u, s) return (u == 1) == (s == 1) end,
+    setCell     = function(b, r, c, v) return b:setCellState(r, c, v) end,
+    blank       = 0,
+})
 
 function NonogramBoard:serialize()
     local n = self.n

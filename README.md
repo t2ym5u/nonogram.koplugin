@@ -24,6 +24,7 @@ in that line. Solving the puzzle reveals a pixel-art picture.
 - **Two cell states** — filled or crossed-out (to mark known-empty cells)
 - **Clue highlighting** — tap a clue number to highlight its corresponding group
 - **Check** — highlights contradictions with the clues
+- **Hint** — two taps: the first says which cell is about to give, the second acts on it. A cell that contradicts the solution is always reported before a fresh one is revealed
 - **Reveal solution** — shows the full solution
 - **Undo** — step back through your moves
 - **Auto-save** — game state is saved and restored on next launch
