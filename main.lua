@@ -11,7 +11,9 @@ end
 
 local PluginBase       = require("plugin_base")
 local NonogramScreen   = lrequire("screen")
-local _                = require("gettext")
+local _                = require("i18n")
+
+require("i18n").extend(lrequire("i18n_fr"))
 
 local NonogramPlugin = PluginBase:extend{
     name      = "nonogram",
