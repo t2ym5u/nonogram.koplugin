@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-10-30
+
+### Added
+- "New game" once the picture is solved (or the solution is shown): the
+  action bar shows it in place of the game's buttons, so the next puzzle no
+  longer needs the menu.
+
+### Changed
+- Redesigned play screen, in line with the other games: a full-width action
+  bar (on two rows in landscape, where five buttons don't fit one), a
+  larger board -- clues and grid together are fitted to both the width and
+  the height available -- and one frame around it. The status line reads
+  "size · difficulty · Remaining: n" and wraps in landscape instead of
+  being cut off; the Fill/Cross mode is shown on its button only.
+- Title-bar menu in the same order as every other game, with the current
+  values shown: "Size: 10×10" (was "Grid: 10x10"), "Difficulty: …" (was
+  "Diff: …"), and "Show solution" (was "Reveal").
+- New README screenshot.
+
+### Fixed
+- Show solution now also clears wrongly filled cells, so the revealed board
+  is actually solved. A wrong fill left in place kept it unsolved, and the
+  round never read as over.
+- Clue numbers were sized off the cell and then scaled again by the screen
+  DPI, so two-digit clues overflowed their slots; they are now fitted and
+  centred.
+- Using Hint wiped the saved game: the board was saved as nothing. And when
+  a hint fills the last cell, the status now shows the win message.
+- The grid's closing lines were drawn just past its edges.
+
 ## [1.2.2] - 2026-10-07
 
 ### Fixed

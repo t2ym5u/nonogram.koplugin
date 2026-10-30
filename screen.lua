@@ -7,11 +7,8 @@ local function lrequire(name)
     return package.loaded[key]
 end
 
-local ButtonTable     = require("ui/widget/buttontable")
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
-local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local Size            = require("ui/size")
@@ -75,92 +72,75 @@ end
 
 function NonogramScreen:buildLayout()
     self.mode = self.mode or "fill"
-
-    self.board_widget = NonogramBoardWidget:new{
-        board         = self.board,
-        onCellAction  = function(r, c, is_hold)
-            self:onCellAction(r, c, is_hold)
-        end,
-    }
-
     local is_landscape = self:isLandscape()
-    local sw           = DeviceScreen:getWidth()
-
-    local board_frame = FrameContainer:new{
-        padding = Size.padding.large,
-        margin  = Size.margin.default,
-        self.board_widget,
-    }
-
-    local board_total   = self.board_widget.dimen.w + (Size.padding.large + Size.margin.default) * 2
-    local right_panel_width = sw - board_total - Size.span.horizontal_default
-    local button_width = is_landscape
-        and math.max(right_panel_width - Size.span.horizontal_default, 100)
-        or  math.floor(sw * 0.9)
-
-    local status_width = is_landscape and button_width or board_total
-    self.status_text:setMaxWidth(status_width)
-    -- Centred in a fixed-width CenterContainer matching the board: a plain
-    -- VerticalGroup caches its children's widths the first time it's
-    -- measured and never re-centres them afterwards, so the status text
-    -- would drift off-center as it keeps changing width (see 2048.koplugin).
-    local status_container = CenterContainer:new{
-        dimen = Geom:new{ w = status_width, h = self.status_text:getSize().h },
-        self.status_text,
-    }
 
     local title_bar = self:buildTitleBar(_("Nonogram"), function()
         return {
             { text = _("New game"),            callback = function() self:onNewGame() end },
             { text = self:getGridButtonText(), callback = function() self:openGridMenu() end },
             { text = self:getDiffButtonText(), callback = function() self:openDifficultyMenu() end },
-            { text = _("Reveal"),              callback = function() self:onReveal() end },
+            { text = _("Show solution"),       callback = function() self:onReveal() end },
             self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
         }
     end)
 
-    local control_buttons = ButtonTable:new{
-        shrink_unneeded_width = true,
-        width   = button_width,
-        buttons = {
-            {
-                { id = "mode_button", text = self:getModeButtonText(),
-                  callback = function() self:toggleMode() end },
-                { text = _("Erase"),  callback = function() self:onErase() end },
-                { text = _("Check"),  callback = function() self:onCheck() end },
-                { text = _("Hint"), callback = function() self:onHint() end },
-                { id = "undo_button", text = _("Undo"),
-                  callback = function() self:onUndo() end },
-            },
-        },
+    self.status_text:setMaxWidth(self:getControlsWidth())
+    local buttons = {
+        { id = "mode_button", text = self:getModeButtonText(),
+          callback = function() self:toggleMode() end },
+        { text = _("Erase"), callback = function() self:onErase() end },
+        { text = _("Check"), callback = function() self:onCheck() end },
+        { text = _("Hint"),  callback = function() self:onHint() end },
+        { id = "undo_button", text = _("Undo"),
+          callback = function() self:onUndo() end },
     }
-    self.mode_button = control_buttons:getButtonById("mode_button")
-    self.undo_button = control_buttons:getButtonById("undo_button")
-
+    -- Five buttons do not fit the narrow landscape side panel on one row.
+    local action_bar = self:buildActionBar(is_landscape
+        and { { buttons[1], buttons[2], buttons[3] }, { buttons[4], buttons[5] } }
+        or  buttons)
+    self.mode_button = action_bar:getButtonById("mode_button")
+    self.undo_button = action_bar:getButtonById("undo_button")
     self:updateUndoButton()
+    local controls = VerticalGroup:new{
+        align = "center",
+        self.status_text,
+        VerticalSpan:new{ width = Size.span.vertical_large },
+        action_bar,
+    }
+
+    -- The widget draws its own thick outer border around clues and grid, so
+    -- the frame stays borderless: one visible edge around the board, not two.
+    -- Clues make the board wider and taller than the grid alone, so it is
+    -- fitted to both budget dimensions rather than to a square.
+    local frame_pad   = Size.padding.large
+    local frame_extra = 2 * frame_pad
+    local budget_w, budget_h = self:getBoardBudget(title_bar, controls)
+    self.board_widget = NonogramBoardWidget:new{
+        board        = self.board,
+        max_width    = budget_w - frame_extra,
+        max_height   = budget_h - frame_extra,
+        onCellAction = function(r, c, is_hold)
+            self:onCellAction(r, c, is_hold)
+        end,
+    }
+    local board_frame = FrameContainer:new{
+        padding    = frame_pad,
+        margin     = 0,
+        bordersize = 0,
+        self.board_widget,
+    }
 
     if is_landscape then
-        local right_panel = VerticalGroup:new{
-            align = "center",
-            status_container,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            control_buttons,
-        }
         local content = HorizontalGroup:new{
             align = "center",
             board_frame,
-            HorizontalSpan:new{ width = Size.span.horizontal_default },
-            right_panel,
+            HorizontalSpan:new{ width = self:getGutter() },
+            controls,
         }
         self:buildLandscapeLayout(title_bar, content)
     else
-        local content = VerticalGroup:new{
-            align = "center",
-            board_frame,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            status_container,
-        }
-        self:buildPortraitLayout(title_bar, content, control_buttons)
+        self:buildPortraitLayout(title_bar, board_frame,
+            VerticalGroup:new{ align = "center", controls, VerticalSpan:new{ width = self:getGutter() } })
     end
     self:updateStatus()
 end
@@ -233,6 +213,10 @@ function NonogramScreen:onReveal()
         for c = 1, n do
             if self.board.solution[r][c] then
                 self.board.user[r][c] = 1
+            elseif self.board.user[r][c] == 1 then
+                -- A wrong fill left in place would keep the revealed board
+                -- unsolved, and the round would never read as over.
+                self.board.user[r][c] = 0
             end
         end
     end
@@ -275,12 +259,12 @@ end
 function NonogramScreen:getDiffButtonText()
     local diff  = self.plugin:getSetting("difficulty", "medium")
     local label = MenuHelper.DIFFICULTY_LABELS[diff] or diff
-    return T(_("Diff: %1"), label)
+    return T(_("Difficulty: %1"), label)
 end
 
 function NonogramScreen:getGridButtonText()
     local n = self.board.n
-    return T(_("Grid: %1"), n .. "x" .. n)
+    return T(_("Size: %1"), n .. "\xC3\x97" .. n)
 end
 
 function NonogramScreen:openDifficultyMenu()
@@ -300,10 +284,10 @@ end
 function NonogramScreen:openGridMenu()
     local sizes = {}
     for _, n in ipairs(SIZES) do
-        sizes[#sizes + 1] = { id = n, text = n .. "x" .. n }
+        sizes[#sizes + 1] = { id = n, text = n .. "\xC3\x97" .. n }
     end
     MenuHelper.openSizeMenu{
-        title     = _("Select grid size"),
+        title     = _("Select size"),
         sizes     = sizes,
         current   = self.board.n,
         parent    = self,
@@ -325,11 +309,21 @@ function NonogramScreen:updateStatus(msg)
     elseif self.board:isSolved() then
         status = _("Puzzle complete!")
     else
-        local remaining = self.board:getRemainingCells()
-        local mode_label = (self.mode == "fill") and _("Fill") or _("Cross")
-        status = T(_("Remaining: %1  |  Mode: %2"), remaining, mode_label)
+        -- The mode is not repeated here: the mode button already says it.
+        local diff  = self.plugin:getSetting("difficulty", "medium")
+        status = self:joinStatus(
+            T("%1×%1", self.board.n),
+            MenuHelper.DIFFICULTY_LABELS[diff] or diff,
+            T(_("Remaining: %1"), self.board:getRemainingCells()))
     end
     ScreenBase.updateStatus(self, status)
+    -- Every move, hint, undo and reveal ends here, so the bar follows the board.
+    self:refreshActionBar()
+end
+
+-- Show solution fills in the exact solution, so it ends the round too.
+function NonogramScreen:isRoundOver()
+    return self.board:isSolved()
 end
 
 return NonogramScreen

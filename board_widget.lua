@@ -13,6 +13,8 @@ local drawDiagonalLine = gw_module.drawDiagonalLine
 local NonogramBoardWidget = GridWidgetBase:extend{
     board      = nil,
     size_ratio = 0.70,
+    max_width  = nil,   -- pixel budget for clues + grid (nil = size_ratio)
+    max_height = nil,
 }
 
 function NonogramBoardWidget:init()
@@ -32,8 +34,29 @@ function NonogramBoardWidget:init()
         if l > max_col_clue_len then max_col_clue_len = l end
     end
 
-    self.clue_w = math.ceil(max_row_clue_len * self.cell_w)
-    self.clue_h = math.ceil(max_col_clue_len * self.cell_h)
+    -- Each clue takes one cell-sized slot, so clues + grid span
+    -- (n + longest row clue) cells across and (n + longest column clue)
+    -- down. Given a budget, pick the one cell size that fits both ways;
+    -- without one, keep the base's size_ratio sizing of the grid.
+    local cell = math.min(self.cell_w, self.cell_h)
+    if self.max_width or self.max_height then
+        cell = math.huge
+        if self.max_width then
+            cell = math.min(cell, self.max_width / (n + max_row_clue_len))
+        end
+        if self.max_height then
+            cell = math.min(cell, self.max_height / (n + max_col_clue_len))
+        end
+    end
+    cell = math.max(8, math.floor(cell))
+    self.size      = cell * n
+    self.cell_w    = cell
+    self.cell_h    = cell
+    self.cell_w_px = cell
+    self.cell_h_px = cell
+
+    self.clue_w = max_row_clue_len * cell
+    self.clue_h = max_col_clue_len * cell
 
     local total_w = self.clue_w + self.size
     local total_h = self.clue_h + self.size
@@ -43,9 +66,21 @@ function NonogramBoardWidget:init()
     self.grid_ox = self.clue_w
     self.grid_oy = self.clue_h
 
-    local cell_min = math.min(self.cell_w, self.cell_h)
-    local clue_size = math.max(8, math.floor(cell_min * 0.55))
-    self.clue_face = Font:getFace("cfont", clue_size)
+    -- Largest clue font whose widest number fits its slot. Measured with an
+    -- unbounded width (sizeUtf8Text truncates at its width argument, which
+    -- would make the width test always pass); ink height is y_top + y_bottom.
+    local sample = tostring(n):gsub("%d", "8")
+    local lo, hi, best = 6, math.max(6, cell), 6
+    while lo <= hi do
+        local mid  = math.floor((lo + hi) / 2)
+        local m    = RenderText:sizeUtf8Text(0, math.huge, Font:getFace("cfont", mid), sample, true, false)
+        if m.x <= cell * 0.8 and (m.y_top + m.y_bottom) <= cell * 0.6 then
+            best, lo = mid, mid + 1
+        else
+            hi = mid - 1
+        end
+    end
+    self.clue_face = Font:getFace("cfont", best)
 
     self.ges_events = {
         Tap = {
@@ -129,9 +164,9 @@ function NonogramBoardWidget:paintTo(bb, x, y)
             local cell_cx = col_x + math.floor(cw / 2)
             local cell_cy = slot_y + math.floor(ch / 2)
             local txt = tostring(clue[i])
-            local m = RenderText:sizeUtf8Text(0, math.floor(cw), face, txt, true, false)
+            local m = RenderText:sizeUtf8Text(0, math.huge, face, txt, true, false)
             local tx = cell_cx - math.floor(m.x / 2)
-            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2)
+            local ty = cell_cy + math.floor((m.y_top - m.y_bottom) / 2)
             RenderText:renderUtf8Text(bb, tx, ty, face, txt, true, false, text_color)
         end
     end
@@ -147,9 +182,9 @@ function NonogramBoardWidget:paintTo(bb, x, y)
             local cell_cx = slot_x + math.floor(cw / 2)
             local cell_cy = row_y + math.floor(ch / 2)
             local txt = tostring(clue[i])
-            local m = RenderText:sizeUtf8Text(0, math.floor(cw), face, txt, true, false)
+            local m = RenderText:sizeUtf8Text(0, math.huge, face, txt, true, false)
             local tx = cell_cx - math.floor(m.x / 2)
-            local ty = cell_cy - math.floor((m.y_bottom - m.y_top) / 2)
+            local ty = cell_cy + math.floor((m.y_top - m.y_bottom) / 2)
             RenderText:renderUtf8Text(bb, tx, ty, face, txt, true, false, text_color)
         end
     end
@@ -187,9 +222,10 @@ function NonogramBoardWidget:paintTo(bb, x, y)
     local thick_line = math.max(2, math.floor(math.min(cw, ch) / 10))
 
     for i = 0, n do
-        local px = ox + math.floor(i * cw)
-        local py = oy + math.floor(i * ch)
         local lw = (i == 0 or i == n) and thick_line or thin_line
+        -- Clamp so the closing lines are drawn inside the widget, not past it.
+        local px = ox + math.min(math.floor(i * cw), gsize - lw)
+        local py = oy + math.min(math.floor(i * ch), gsize - lw)
         drawLine(bb, px, oy, lw, gsize, Blitbuffer.COLOR_BLACK)
         drawLine(bb, ox, py, gsize, lw, Blitbuffer.COLOR_BLACK)
     end
