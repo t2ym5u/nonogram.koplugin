@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-11-04
+
+### Changed
+- Faster 15×15 Easy puzzles: up to 0.4 s on a desktop (about 10 s on a
+  Kobo) down to under 0.1 s. The solution check works on rows and columns
+  as bit masks; same puzzles as before.
+- A "Generating puzzle…" progress bar shows when a puzzle takes more than a
+  moment. Needs game-common 1.12.0.
+
 ## [1.4.3] - 2026-11-03
 
 ### Changed

@@ -43,11 +43,18 @@ end
 -- check of testing against the generator's own known-good clues.
 -- ---------------------------------------------------------------------------
 
+-- 1.5.0: a line is an integer bit mask (bit i - 1 set = cell i filled) and
+-- a set of lines is summed up by two masks, the cells some line fills and
+-- the cells some line leaves empty. Same algorithm and same order as the
+-- table-of-booleans version it replaces -- same propagation, same branch
+-- choices, same counts and node counts, so the same puzzles -- but a 15x15
+-- Easy puzzle no longer takes up to 0.4 s on a desktop (10 s on a Kobo).
+local bit = require("bit")
+local band, bor, bnot, lshift = bit.band, bit.bor, bit.bnot, bit.lshift
+
 local function enumerateLines(clue, n)
     if #clue == 1 and clue[1] == 0 then
-        local empty = {}
-        for i = 1, n do empty[i] = false end
-        return { empty }
+        return { 0 }
     end
     local m = #clue
     local minlen = 0
@@ -57,48 +64,56 @@ local function enumerateLines(clue, n)
     local slack = n - minlen
 
     local results = {}
-    local line = {}
-    for i = 1, n do line[i] = false end
-
-    local function place(i, pos, gaps_left)
+    local function place(i, pos, gaps_left, line)
         if i > m then
-            local copy = {}
-            for j = 1, n do copy[j] = line[j] end
-            results[#results + 1] = copy
+            results[#results + 1] = line
             return
         end
         for extra = 0, gaps_left do
             local start = pos + extra
             local finish = start + clue[i] - 1
             if finish > n then break end
-            for j = start, finish do line[j] = true end
-            place(i + 1, finish + 2, gaps_left - extra)
-            for j = start, finish do line[j] = false end
+            -- cells start..finish: bits start - 1 .. finish - 1
+            local block = lshift(lshift(1, clue[i]) - 1, start - 1)
+            place(i + 1, finish + 2, gaps_left - extra, bor(line, block))
         end
     end
-    place(1, 1, slack)
+    place(1, 1, slack, 0)
     return results
 end
 
-local function achievableAt(lines, pos)
-    local t, f = false, false
-    for _, line in ipairs(lines) do
-        if line[pos] then t = true else f = true end
-        if t and f then break end
+-- The cells some line of `lines` fills, and the cells some line leaves
+-- empty, as masks over the n cells. Line sets are never modified (filtering
+-- makes a new one), so the masks are cached per set.
+local ach_t = setmetatable({}, { __mode = "k" })
+local ach_f = setmetatable({}, { __mode = "k" })
+local function achievable(lines, full)
+    local t = ach_t[lines]
+    if t then return t, ach_f[lines] end
+    local f = 0
+    t = 0
+    for i = 1, #lines do
+        local line = lines[i]
+        t = bor(t, line)
+        f = bor(f, band(bnot(line), full))
+        if t == full and f == full then break end
     end
+    ach_t[lines], ach_f[lines] = t, f
     return t, f
 end
 
-local function filterByAchievable(lines, achievable, n)
+-- Keeps the lines that fill only cells allowed filled and leave empty only
+-- cells allowed empty (the same set when they all do).
+local function filterByAchievable(lines, can_fill, can_empty, full)
+    local no_fill, no_empty = band(bnot(can_fill), full), band(bnot(can_empty), full)
+    local t, f = achievable(lines, full)
+    if band(t, no_fill) == 0 and band(f, no_empty) == 0 then return lines end
     local out = {}
-    for _, line in ipairs(lines) do
-        local ok = true
-        for pos = 1, n do
-            local v = line[pos]
-            local a = achievable[pos]
-            if (v and not a.t) or ((not v) and not a.f) then ok = false; break end
+    for i = 1, #lines do
+        local line = lines[i]
+        if band(line, no_fill) == 0 and band(bnot(line), no_empty) == 0 then
+            out[#out + 1] = line
         end
-        if ok then out[#out + 1] = line end
     end
     return out
 end
@@ -106,27 +121,36 @@ end
 -- Propagate to a fixed point. Returns false if any line set collapses to
 -- empty (infeasible), true otherwise.
 local function propagate(row_live, col_live, n)
+    local full = lshift(1, n) - 1
+    local lt, lf = {}, {}
     local changed = true
     while changed do
         changed = false
+        -- Rows against what the columns allow (columns don't change here).
+        for c = 1, n do lt[c], lf[c] = achievable(col_live[c], full) end
         for r = 1, n do
-            local achievable = {}
+            local bitr = lshift(1, r - 1)
+            local can_fill, can_empty = 0, 0
             for c = 1, n do
-                local t, f = achievableAt(col_live[c], r)
-                achievable[c] = { t = t, f = f }
+                local bitc = lshift(1, c - 1)
+                if band(lt[c], bitr) ~= 0 then can_fill = bor(can_fill, bitc) end
+                if band(lf[c], bitr) ~= 0 then can_empty = bor(can_empty, bitc) end
             end
-            local filtered = filterByAchievable(row_live[r], achievable, n)
+            local filtered = filterByAchievable(row_live[r], can_fill, can_empty, full)
             if #filtered == 0 then return false end
             if #filtered < #row_live[r] then changed = true end
             row_live[r] = filtered
         end
+        for r = 1, n do lt[r], lf[r] = achievable(row_live[r], full) end
         for c = 1, n do
-            local achievable = {}
+            local bitc = lshift(1, c - 1)
+            local can_fill, can_empty = 0, 0
             for r = 1, n do
-                local t, f = achievableAt(row_live[r], c)
-                achievable[r] = { t = t, f = f }
+                local bitr = lshift(1, r - 1)
+                if band(lt[r], bitc) ~= 0 then can_fill = bor(can_fill, bitr) end
+                if band(lf[r], bitc) ~= 0 then can_empty = bor(can_empty, bitr) end
             end
-            local filtered = filterByAchievable(col_live[c], achievable, n)
+            local filtered = filterByAchievable(col_live[c], can_fill, can_empty, full)
             if #filtered == 0 then return false end
             if #filtered < #col_live[c] then changed = true end
             col_live[c] = filtered
@@ -187,7 +211,7 @@ local function countSolutions(row_clues, col_clues, n, limit, node_budget)
     end
 
     search(row_live, col_live)
-    return solutions, exhausted
+    return solutions, exhausted, nodes
 end
 
 local NonogramBoard = {}
@@ -228,7 +252,8 @@ local function uniquenessNodeBudget(n)
     return 150000
 end
 
-function NonogramBoard:generate(difficulty)
+-- on_progress (optional): called with a 0..1 fraction as it goes.
+function NonogramBoard:generate(difficulty, on_progress)
     self.difficulty = difficulty or self.difficulty
     local n = self.n
     local density = self.difficulty == "easy" and 0.45
@@ -239,6 +264,8 @@ function NonogramBoard:generate(difficulty)
     local best_solution, best_row_clues, best_col_clues
 
     for attempt = 1, 400 do
+        -- 15x15 Easy takes ~10 attempts, the others one or two
+        if on_progress then on_progress(attempt / (attempt + 10)) end
         local candidate = {}
         for r = 1, n do
             candidate[r] = {}
@@ -434,4 +461,7 @@ end
 return {
     NonogramBoard = NonogramBoard,
     SIZES         = SIZES,
+    -- for the specs
+    _countSolutions = countSolutions,
+    _computeClues   = computeClues,
 }

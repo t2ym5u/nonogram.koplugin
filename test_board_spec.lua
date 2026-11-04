@@ -60,6 +60,202 @@ describe("NonogramBoard", function()
         end)
     end)
 
+    -- 1.5.0: line sets became bit masks (same algorithm, same order, same
+    -- puzzles; 15x15 Easy took up to 0.4 s on a desktop). Keep the old
+    -- counter here and check the two agree, and that generation stays
+    -- unique and quick.
+    describe("counter", function()
+        -- The pre-1.5.0 counter, verbatim (renamed old_*).
+        local function old_enumerateLines(clue, n)
+            if #clue == 1 and clue[1] == 0 then
+                local empty = {}
+                for i = 1, n do empty[i] = false end
+                return { empty }
+            end
+            local m = #clue
+            local minlen = 0
+            for _, k in ipairs(clue) do minlen = minlen + k end
+            minlen = minlen + (m - 1)
+            if minlen > n then return {} end
+            local slack = n - minlen
+
+            local results = {}
+            local line = {}
+            for i = 1, n do line[i] = false end
+
+            local function place(i, pos, gaps_left)
+                if i > m then
+                    local copy = {}
+                    for j = 1, n do copy[j] = line[j] end
+                    results[#results + 1] = copy
+                    return
+                end
+                for extra = 0, gaps_left do
+                    local start = pos + extra
+                    local finish = start + clue[i] - 1
+                    if finish > n then break end
+                    for j = start, finish do line[j] = true end
+                    place(i + 1, finish + 2, gaps_left - extra)
+                    for j = start, finish do line[j] = false end
+                end
+            end
+            place(1, 1, slack)
+            return results
+        end
+
+        local function old_achievableAt(lines, pos)
+            local t, f = false, false
+            for _, line in ipairs(lines) do
+                if line[pos] then t = true else f = true end
+                if t and f then break end
+            end
+            return t, f
+        end
+
+        local function old_filterByAchievable(lines, achievable, n)
+            local out = {}
+            for _, line in ipairs(lines) do
+                local ok = true
+                for pos = 1, n do
+                    local v = line[pos]
+                    local a = achievable[pos]
+                    if (v and not a.t) or ((not v) and not a.f) then ok = false; break end
+                end
+                if ok then out[#out + 1] = line end
+            end
+            return out
+        end
+
+        -- Propagate to a fixed point. Returns false if any line set collapses to
+        -- empty (infeasible), true otherwise.
+        local function old_propagate(row_live, col_live, n)
+            local changed = true
+            while changed do
+                changed = false
+                for r = 1, n do
+                    local achievable = {}
+                    for c = 1, n do
+                        local t, f = old_achievableAt(col_live[c], r)
+                        achievable[c] = { t = t, f = f }
+                    end
+                    local filtered = old_filterByAchievable(row_live[r], achievable, n)
+                    if #filtered == 0 then return false end
+                    if #filtered < #row_live[r] then changed = true end
+                    row_live[r] = filtered
+                end
+                for c = 1, n do
+                    local achievable = {}
+                    for r = 1, n do
+                        local t, f = old_achievableAt(row_live[r], c)
+                        achievable[r] = { t = t, f = f }
+                    end
+                    local filtered = old_filterByAchievable(col_live[c], achievable, n)
+                    if #filtered == 0 then return false end
+                    if #filtered < #col_live[c] then changed = true end
+                    col_live[c] = filtered
+                end
+            end
+            return true
+        end
+
+        local function old_copyLiveState(row_live, col_live, n)
+            local r2, c2 = {}, {}
+            for r = 1, n do r2[r] = row_live[r] end
+            for c = 1, n do c2[c] = col_live[c] end
+            return r2, c2
+        end
+
+        local function old_countSolutions(row_clues, col_clues, n, limit, node_budget)
+            local row_live, col_live = {}, {}
+            for r = 1, n do row_live[r] = old_enumerateLines(row_clues[r], n) end
+            for c = 1, n do col_live[c] = old_enumerateLines(col_clues[c], n) end
+
+            local solutions, nodes, exhausted = 0, 0, false
+
+            local function search(row_live, col_live)
+                if solutions >= limit or exhausted then return end
+                nodes = nodes + 1
+                if nodes > node_budget then exhausted = true; return end
+
+                if not old_propagate(row_live, col_live, n) then return end
+
+                local all_singletons = true
+                for r = 1, n do
+                    if #row_live[r] ~= 1 then all_singletons = false; break end
+                end
+                if all_singletons then
+                    solutions = solutions + 1
+                    return
+                end
+
+                local best_is_row, best_idx, best_len = true, nil, math.huge
+                for r = 1, n do
+                    if #row_live[r] >= 2 and #row_live[r] < best_len then
+                        best_len, best_idx, best_is_row = #row_live[r], r, true
+                    end
+                end
+                for c = 1, n do
+                    if #col_live[c] >= 2 and #col_live[c] < best_len then
+                        best_len, best_idx, best_is_row = #col_live[c], c, false
+                    end
+                end
+
+                local live = best_is_row and row_live[best_idx] or col_live[best_idx]
+                for _, candidate in ipairs(live) do
+                    local r2, c2 = old_copyLiveState(row_live, col_live, n)
+                    if best_is_row then r2[best_idx] = { candidate } else c2[best_idx] = { candidate } end
+                    search(r2, c2)
+                    if solutions >= limit or exhausted then return end
+                end
+            end
+
+            search(row_live, col_live)
+            return solutions, exhausted
+        end
+        it("counts the same solutions as the old counter on random grids", function()
+            for _, n in ipairs({ 5, 10, 15 }) do
+                for seed = 1, (n == 15 and 12 or 40) do
+                    math.randomseed(seed * 4049 + n)
+                    local dens = ({ 0.3, 0.45, 0.55, 0.65, 0.8 })[seed % 5 + 1]
+                    local g = {}
+                    for r = 1, n do
+                        g[r] = {}
+                        for c = 1, n do g[r][c] = math.random() < dens end
+                    end
+                    local rc, cc = Mod._computeClues(g, n)
+                    local so, eo = old_countSolutions(rc, cc, n, 3, 300000)
+                    local sn, en = Mod._countSolutions(rc, cc, n, 3, 300000)
+                    assert.are.equal(eo, en)
+                    assert.are.equal(so, sn, ("n=%d seed %d"):format(n, seed))
+                end
+            end
+        end)
+
+        it("generates uniquely solvable puzzles quickly at every size and difficulty", function()
+            local B = Mod.NonogramBoard
+            for _, n in ipairs(Mod.SIZES) do
+                for _, diff in ipairs({ "easy", "medium", "hard" }) do
+                    local worst = 0
+                    for seed = 1, (n == 15 and diff == "easy") and 3 or 6 do
+                        math.randomseed(seed * 7919 + n)
+                        local b = B:new{ n = n, difficulty = diff }
+                        local t0 = os.clock()
+                        b:generate(diff)
+                        worst = math.max(worst, os.clock() - t0)
+                        local count, exhausted = Mod._countSolutions(b.row_clues, b.col_clues, n, 2, 3000000)
+                        assert.is_false(exhausted)
+                        assert.are.equal(1, count, ("n=%d %s seed %d not unique"):format(n, diff, seed))
+                    end
+                    -- generous: ~0.1 s on a desktop under LuaJIT (plain Lua
+                    -- runs `bit` through a slow shim, so only time LuaJIT)
+                    if rawget(_G, "jit") then
+                        assert.is_true(worst < 3.0, ("n=%d %s took %.2f s"):format(n, diff, worst))
+                    end
+                end
+            end
+        end)
+    end)
+
     describe("setCellState / toggleCell", function()
         it("setCellState stores the given state", function()
             local b = newBoard(5)
