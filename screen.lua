@@ -192,7 +192,9 @@ function NonogramScreen:onGridChange(n)
 end
 
 function NonogramScreen:onUndo()
-    local ok, err = self.board:undo()
+    -- Board.undo, not self.board:undo(): the board keeps its UndoStack in a
+    -- field named `undo`, which hides the method on the instance.
+    local ok, err = NonogramBoard.undo(self.board)
     if not ok then
         self:showMessage(err or _("Nothing to undo."), 2)
         return

@@ -165,7 +165,7 @@ local ok, err = pcall(function()
     assert(not b7:canUndo(), "canUndo false initially")
     b7:setCellState(1, 1, 1)
     assert(b7:canUndo(), "canUndo true after move")
-    b7:undo()
+    NonogramBoard.undo(b7)   -- the `undo` field hides the method
     assert(b7.user[1][1] == 0, "cell restored after undo")
     assert(not b7:canUndo(), "canUndo false after undoing all")
 
