@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-11-04
+
+### Changed
+- No more guessing: every puzzle, at every size and level, can now be
+  solved line by line -- look at one row or column, fill or cross the
+  cells its clue forces, move on -- without ever having to try a cell
+  and see whether it breaks. Before, about 1 15×15 Easy puzzle in 3 (and
+  1 10×10 Easy puzzle in 9) could not be finished without such a guess.
+- The levels now mean how long the chain of reasoning is: Easy puzzles
+  are fuller pictures that come apart in a few sweeps over the rows and
+  columns, Hard ones are sparser and need many more back-and-forths
+  between rows and columns. (Easy used to be the sparsest picture, which
+  actually made it the hardest to reason out.) As a result most puzzles,
+  including the Daily Challenge, are new ones.
+- 15×15 puzzles no longer take ages now and then: the slowest took up to
+  3 s on a desktop (over a minute on a Kobo); now every puzzle is ready
+  in under 0.04 s on a desktop.
+- The solution check also only re-examines the rows and columns that a
+  change affects.
+- Uses less memory: the game loads when you open it, not when KOReader
+  starts, so it no longer takes memory or startup time while unplayed.
+
 ## [1.5.1] - 2026-11-04
 
 ### Fixed

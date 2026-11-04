@@ -210,9 +210,10 @@ describe("NonogramBoard", function()
             end
 
             search(row_live, col_live)
-            return solutions, exhausted
+            return solutions, exhausted, nodes
         end
         it("counts the same solutions as the old counter on random grids", function()
+            local cache = { [5] = {}, [10] = {}, [15] = {} }
             for _, n in ipairs({ 5, 10, 15 }) do
                 for seed = 1, (n == 15 and 12 or 40) do
                     math.randomseed(seed * 4049 + n)
@@ -223,10 +224,16 @@ describe("NonogramBoard", function()
                         for c = 1, n do g[r][c] = math.random() < dens end
                     end
                     local rc, cc = Mod._computeClues(g, n)
-                    local so, eo = old_countSolutions(rc, cc, n, 3, 300000)
-                    local sn, en = Mod._countSolutions(rc, cc, n, 3, 300000)
+                    local so, eo, no = old_countSolutions(rc, cc, n, 3, 300000)
+                    local sn, en, nn = Mod._countSolutions(rc, cc, n, 3, 300000)
                     assert.are.equal(eo, en)
                     assert.are.equal(so, sn, ("n=%d seed %d"):format(n, seed))
+                    -- 1.6.0 propagation only revisits changed lines: same
+                    -- search tree, so the same node count
+                    assert.are.equal(no, nn, ("n=%d seed %d nodes"):format(n, seed))
+                    -- and with the generator's clue -> lines cache
+                    local sc, ec, nc = Mod._countSolutions(rc, cc, n, 3, 300000, cache[n])
+                    assert.are.same({ so, eo, no }, { sc, ec, nc })
                 end
             end
         end)
@@ -236,7 +243,7 @@ describe("NonogramBoard", function()
             for _, n in ipairs(Mod.SIZES) do
                 for _, diff in ipairs({ "easy", "medium", "hard" }) do
                     local worst = 0
-                    for seed = 1, (n == 15 and diff == "easy") and 3 or 6 do
+                    for seed = 1, 6 do
                         math.randomseed(seed * 7919 + n)
                         local b = B:new{ n = n, difficulty = diff }
                         local t0 = os.clock()
@@ -246,11 +253,168 @@ describe("NonogramBoard", function()
                         assert.is_false(exhausted)
                         assert.are.equal(1, count, ("n=%d %s seed %d not unique"):format(n, diff, seed))
                     end
-                    -- generous: ~0.1 s on a desktop under LuaJIT (plain Lua
-                    -- runs `bit` through a slow shim, so only time LuaJIT)
+                    -- generous: under 0.02 s on a desktop under LuaJIT (plain
+                    -- Lua runs `bit` through a slow shim, so only time LuaJIT)
                     if rawget(_G, "jit") then
-                        assert.is_true(worst < 3.0, ("n=%d %s took %.2f s"):format(n, diff, worst))
+                        assert.is_true(worst < 0.5, ("n=%d %s took %.2f s"):format(n, diff, worst))
                     end
+                end
+            end
+        end)
+    end)
+
+    -- 1.6.0: no guessing -- every puzzle solves by line logic alone.
+    describe("line logic", function()
+        -- An independent, cell-by-cell line solver (not the bit-mask one in
+        -- board.lua): for each row then each column, list every placement
+        -- of its clue that agrees with the known cells and settle the cells
+        -- they all agree on; repeat until nothing changes. No search.
+        local function placements(clue, n, known)
+            local res, line = {}, {}
+            if clue[1] == 0 then clue = {} end
+            local function rec(k, pos)
+                if k > #clue then
+                    for i = pos, n do line[i] = false end
+                    for i = 1, n do
+                        if known[i] ~= nil and known[i] ~= line[i] then return end
+                    end
+                    local cp = {}
+                    for i = 1, n do cp[i] = line[i] end
+                    res[#res + 1] = cp
+                    return
+                end
+                local rest = 0
+                for j = k + 1, #clue do rest = rest + clue[j] + 1 end
+                for st = pos, n - clue[k] + 1 - rest do
+                    for i = pos, st - 1 do line[i] = false end
+                    for i = st, st + clue[k] - 1 do line[i] = true end
+                    local nx = st + clue[k]
+                    if nx <= n then line[nx] = false end
+                    -- prune as soon as the placed prefix contradicts
+                    local ok = true
+                    for i = pos, math.min(nx, n) do
+                        if known[i] ~= nil and known[i] ~= line[i] then ok = false; break end
+                    end
+                    if ok then rec(k + 1, nx + 1) end
+                end
+            end
+            rec(1, 1)
+            return res
+        end
+        local function naiveLineSolve(rc, cc, n)
+            local g = {}
+            for r = 1, n do g[r] = {} end
+            local changed = true
+            while changed do
+                changed = false
+                for pass = 1, 2 do
+                    for i = 1, n do
+                        local known = {}
+                        for j = 1, n do
+                            if pass == 1 then known[j] = g[i][j] else known[j] = g[j][i] end
+                        end
+                        local P = placements(pass == 1 and rc[i] or cc[i], n, known)
+                        if #P == 0 then return nil end
+                        for j = 1, n do
+                            if known[j] == nil then
+                                local v, all = P[1][j], true
+                                for k = 2, #P do
+                                    if P[k][j] ~= v then all = false; break end
+                                end
+                                if all then
+                                    changed = true
+                                    if pass == 1 then g[i][j] = v else g[j][i] = v end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            for r = 1, n do
+                for c = 1, n do
+                    if g[r][c] == nil then return nil end
+                end
+            end
+            return g
+        end
+
+        it("agrees with an independent line solver on random grids", function()
+            for _, n in ipairs({ 5, 10, 15 }) do
+                for seed = 1, (n == 15 and 20 or 60) do
+                    math.randomseed(seed * 31 + n)
+                    local dens = ({ 0.4, 0.5, 0.6, 0.7 })[seed % 4 + 1]
+                    local g = {}
+                    for r = 1, n do
+                        g[r] = {}
+                        for c = 1, n do g[r][c] = math.random() < dens end
+                    end
+                    local rc, cc = Mod._computeClues(g, n)
+                    local solved = Mod._lineSolve(rc, cc, n)
+                    assert.are.equal(naiveLineSolve(rc, cc, n) ~= nil, solved,
+                        ("n=%d seed %d"):format(n, seed))
+                end
+            end
+        end)
+
+        it("every puzzle solves by line logic alone, at every size and difficulty", function()
+            local B = Mod.NonogramBoard
+            for _, n in ipairs(Mod.SIZES) do
+                for _, diff in ipairs({ "easy", "medium", "hard" }) do
+                    for seed = 1, (n == 15 and 15 or 30) do
+                        math.randomseed(seed * 104729 + n)
+                        local b = B:new{ n = n, difficulty = diff }
+                        local how = b:generate(diff)
+                        local tag = ("n=%d %s seed %d"):format(n, diff, seed)
+                        assert.are.equal("band", how, tag)
+                        local g = naiveLineSolve(b.row_clues, b.col_clues, n)
+                        assert.is_truthy(g, tag .. " needs guessing")
+                        for r = 1, n do
+                            for c = 1, n do
+                                assert.are.equal(b.solution[r][c], g[r][c], tag)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        it("orders the levels by how many passes line logic needs", function()
+            local B = Mod.NonogramBoard
+            for _, n in ipairs(Mod.SIZES) do
+                local prev_max, prev_mean = 0, 0
+                for _, diff in ipairs({ "easy", "medium", "hard" }) do
+                    local band = Mod._PASS_BAND[n][diff]
+                    assert.is_true(band[1] > prev_max, ("n=%d %s band overlaps"):format(n, diff))
+                    prev_max = band[2]
+                    local sum, count = 0, (n == 15 and 15 or 30)
+                    for seed = 1, count do
+                        math.randomseed(seed * 7919 + n)
+                        local b = B:new{ n = n, difficulty = diff }
+                        b:generate(diff)
+                        local solved, passes = Mod._lineSolve(b.row_clues, b.col_clues, n)
+                        assert.is_true(solved)
+                        assert.is_true(passes >= band[1] and passes <= band[2],
+                            ("n=%d %s seed %d: %d passes"):format(n, diff, seed, passes))
+                        sum = sum + passes
+                    end
+                    assert.is_true(sum / count > prev_mean)
+                    prev_mean = sum / count
+                end
+            end
+        end)
+
+        it("gives the same puzzle for the same seed", function()
+            local B = Mod.NonogramBoard
+            for _, n in ipairs(Mod.SIZES) do
+                for _, diff in ipairs({ "easy", "medium", "hard" }) do
+                    local grids = {}
+                    for k = 1, 2 do
+                        math.randomseed(20261104 + n)
+                        local b = B:new{ n = n, difficulty = diff }
+                        b:generate(diff)
+                        grids[k] = b.solution
+                    end
+                    assert.are.same(grids[1], grids[2])
                 end
             end
         end)

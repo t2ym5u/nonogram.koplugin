@@ -19,8 +19,8 @@ in that line. Solving the puzzle reveals a pixel-art picture.
 
 ## Features
 
-- **Multiple grid sizes** — 5×5, 10×10, 15×15, 20×20
-- **Three difficulty levels** — Easy, Medium, Hard
+- **Multiple grid sizes** — 5×5, 10×10, 15×15
+- **Three difficulty levels** — Easy, Medium, Hard; every puzzle solves by line-by-line logic, no guessing (Hard just needs a longer chain of deductions)
 - **Two cell states** — filled or crossed-out (to mark known-empty cells)
 - **Clue highlighting** — tap a clue number to highlight its corresponding group
 - **Check** — highlights contradictions with the clues

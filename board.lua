@@ -50,7 +50,7 @@ end
 -- choices, same counts and node counts, so the same puzzles -- but a 15x15
 -- Easy puzzle no longer takes up to 0.4 s on a desktop (10 s on a Kobo).
 local bit = require("bit")
-local band, bor, bnot, lshift = bit.band, bit.bor, bit.bnot, bit.lshift
+local band, bor, bnot, bxor, lshift = bit.band, bit.bor, bit.bnot, bit.bxor, bit.lshift
 
 local function enumerateLines(clue, n)
     if #clue == 1 and clue[1] == 0 then
@@ -108,55 +108,110 @@ local function filterByAchievable(lines, can_fill, can_empty, full)
     local no_fill, no_empty = band(bnot(can_fill), full), band(bnot(can_empty), full)
     local t, f = achievable(lines, full)
     if band(t, no_fill) == 0 and band(f, no_empty) == 0 then return lines end
-    local out = {}
+    -- the kept lines' masks are worked out on the way (achievable() would
+    -- go over them again)
+    local out, k, ot, of = {}, 0, 0, 0
     for i = 1, #lines do
         local line = lines[i]
-        if band(line, no_fill) == 0 and band(bnot(line), no_empty) == 0 then
-            out[#out + 1] = line
+        local empty = band(bnot(line), full)
+        if band(line, no_fill) == 0 and band(empty, no_empty) == 0 then
+            k = k + 1
+            out[k] = line
+            ot, of = bor(ot, line), bor(of, empty)
         end
     end
+    ach_t[out], ach_f[out] = ot, of
     return out
 end
 
 -- Propagate to a fixed point. Returns false if any line set collapses to
 -- empty (infeasible), true otherwise.
-local function propagate(row_live, col_live, n)
+--
+-- 1.6.0: only the lines whose crossing lines changed what they allow are
+-- filtered again (a row is "dirty" when some column's fillable/emptiable
+-- cells in that row changed, and the other way round), instead of every
+-- row and every column on every sweep. Filtering only ever removes lines,
+-- so the order doesn't matter: the same fixed point is reached (same line
+-- sets, in the same order), hence the same branch choices, counts and node
+-- counts as before -- the same puzzles. A search branch starts from its
+-- parent's fixed point with one line narrowed down to a single candidate:
+-- it passes that line (is_row, idx), and only the lines crossing it start
+-- dirty; otherwise every line does.
+local function propagate(row_live, col_live, n, is_row, idx)
     local full = lshift(1, n) - 1
-    local lt, lf = {}, {}
-    local changed = true
-    while changed do
-        changed = false
-        -- Rows against what the columns allow (columns don't change here).
-        for c = 1, n do lt[c], lf[c] = achievable(col_live[c], full) end
-        for r = 1, n do
-            local bitr = lshift(1, r - 1)
-            local can_fill, can_empty = 0, 0
-            for c = 1, n do
-                local bitc = lshift(1, c - 1)
-                if band(lt[c], bitr) ~= 0 then can_fill = bor(can_fill, bitc) end
-                if band(lf[c], bitr) ~= 0 then can_empty = bor(can_empty, bitc) end
-            end
-            local filtered = filterByAchievable(row_live[r], can_fill, can_empty, full)
-            if #filtered == 0 then return false end
-            if #filtered < #row_live[r] then changed = true end
-            row_live[r] = filtered
-        end
-        for r = 1, n do lt[r], lf[r] = achievable(row_live[r], full) end
-        for c = 1, n do
-            local bitc = lshift(1, c - 1)
-            local can_fill, can_empty = 0, 0
-            for r = 1, n do
-                local bitr = lshift(1, r - 1)
-                if band(lt[r], bitc) ~= 0 then can_fill = bor(can_fill, bitr) end
-                if band(lf[r], bitc) ~= 0 then can_empty = bor(can_empty, bitr) end
-            end
-            local filtered = filterByAchievable(col_live[c], can_fill, can_empty, full)
-            if #filtered == 0 then return false end
-            if #filtered < #col_live[c] then changed = true end
-            col_live[c] = filtered
+    local rt, rf, ct, cf = {}, {}, {}, {}
+    local rdirty, cdirty = {}, {}
+    for i = 1, n do
+        rt[i], rf[i] = achievable(row_live[i], full)
+        ct[i], cf[i] = achievable(col_live[i], full)
+        if idx then
+            rdirty[i], cdirty[i] = not is_row, is_row
+        else
+            rdirty[i], cdirty[i] = true, true
         end
     end
-    return true
+    local pending, passes = true, 0
+    while pending do
+        pending = false
+        passes = passes + 1
+        -- Rows against what the columns allow.
+        for r = 1, n do
+            if rdirty[r] then
+                rdirty[r] = false
+                local bitr = lshift(1, r - 1)
+                local can_fill, can_empty = 0, 0
+                for c = 1, n do
+                    local bitc = lshift(1, c - 1)
+                    if band(ct[c], bitr) ~= 0 then can_fill = bor(can_fill, bitc) end
+                    if band(cf[c], bitr) ~= 0 then can_empty = bor(can_empty, bitc) end
+                end
+                local lines = row_live[r]
+                local filtered = filterByAchievable(lines, can_fill, can_empty, full)
+                if #filtered == 0 then return false end
+                if filtered ~= lines then
+                    row_live[r] = filtered
+                    local t, f = achievable(filtered, full)
+                    local diff = bor(bxor(t, rt[r]), bxor(f, rf[r]))
+                    rt[r], rf[r] = t, f
+                    for c = 1, n do
+                        if band(diff, lshift(1, c - 1)) ~= 0 then
+                            cdirty[c] = true
+                            pending = true
+                        end
+                    end
+                end
+            end
+        end
+        -- Columns against what the rows allow.
+        for c = 1, n do
+            if cdirty[c] then
+                cdirty[c] = false
+                local bitc = lshift(1, c - 1)
+                local can_fill, can_empty = 0, 0
+                for r = 1, n do
+                    local bitr = lshift(1, r - 1)
+                    if band(rt[r], bitc) ~= 0 then can_fill = bor(can_fill, bitr) end
+                    if band(rf[r], bitc) ~= 0 then can_empty = bor(can_empty, bitr) end
+                end
+                local lines = col_live[c]
+                local filtered = filterByAchievable(lines, can_fill, can_empty, full)
+                if #filtered == 0 then return false end
+                if filtered ~= lines then
+                    col_live[c] = filtered
+                    local t, f = achievable(filtered, full)
+                    local diff = bor(bxor(t, ct[c]), bxor(f, cf[c]))
+                    ct[c], cf[c] = t, f
+                    for r = 1, n do
+                        if band(diff, lshift(1, r - 1)) ~= 0 then
+                            rdirty[r] = true
+                            pending = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true, passes
 end
 
 local function copyLiveState(row_live, col_live, n)
@@ -166,19 +221,52 @@ local function copyLiveState(row_live, col_live, n)
     return r2, c2
 end
 
-local function countSolutions(row_clues, col_clues, n, limit, node_budget)
+-- line_cache (optional): clue -> its lines, shared across calls (the
+-- generator's attempts keep meeting the same clues).
+local function initialLive(row_clues, col_clues, n, line_cache)
+    local function lines(clue)
+        if not line_cache then return enumerateLines(clue, n) end
+        local key = table.concat(clue, ",")
+        local l = line_cache[key]
+        if not l then
+            l = enumerateLines(clue, n)
+            line_cache[key] = l
+        end
+        return l
+    end
     local row_live, col_live = {}, {}
-    for r = 1, n do row_live[r] = enumerateLines(row_clues[r], n) end
-    for c = 1, n do col_live[c] = enumerateLines(col_clues[c], n) end
+    for r = 1, n do row_live[r] = lines(row_clues[r]) end
+    for c = 1, n do col_live[c] = lines(col_clues[c]) end
+    return row_live, col_live
+end
+
+-- 1.6.0: pure line logic, the way a player solves it without guessing:
+-- each row or column, given its clue and the cells already known, settles
+-- every cell that all its possible placements agree on; repeat until
+-- nothing changes. Returns whether that alone finishes the grid (which
+-- also proves the solution unique) and how many passes it took (one pass
+-- = every row that learned something, then every column that did).
+local function lineSolve(row_clues, col_clues, n, line_cache)
+    local row_live, col_live = initialLive(row_clues, col_clues, n, line_cache)
+    local ok, passes = propagate(row_live, col_live, n)
+    if not ok then return false, passes end
+    for r = 1, n do
+        if #row_live[r] ~= 1 then return false, passes end
+    end
+    return true, passes
+end
+
+local function countSolutions(row_clues, col_clues, n, limit, node_budget, line_cache)
+    local row_live, col_live = initialLive(row_clues, col_clues, n, line_cache)
 
     local solutions, nodes, exhausted = 0, 0, false
 
-    local function search(row_live, col_live)
+    local function search(row_live, col_live, is_row, idx)
         if solutions >= limit or exhausted then return end
         nodes = nodes + 1
         if nodes > node_budget then exhausted = true; return end
 
-        if not propagate(row_live, col_live, n) then return end
+        if not propagate(row_live, col_live, n, is_row, idx) then return end
 
         local all_singletons = true
         for r = 1, n do
@@ -205,7 +293,7 @@ local function countSolutions(row_clues, col_clues, n, limit, node_budget)
         for _, candidate in ipairs(live) do
             local r2, c2 = copyLiveState(row_live, col_live, n)
             if best_is_row then r2[best_idx] = { candidate } else c2[best_idx] = { candidate } end
-            search(r2, c2)
+            search(r2, c2, best_is_row, best_idx)
             if solutions >= limit or exhausted then return end
         end
     end
@@ -241,71 +329,114 @@ function NonogramBoard:new(opts)
 end
 
 -- There's no "reveal a subset" mechanic here -- the row/col clues ARE the
--- entire puzzle, deduced from nothing else -- so unlike most of this
--- fleet's dig-with-verification retrofits, this generates+verifies whole
--- candidate solutions instead (same shape as hitori/nurikabe): build a
--- random solution, derive its clues, and keep it only if countSolutions
--- proves it's the unique grid matching those clues; otherwise retry.
-local function uniquenessNodeBudget(n)
-    if n <= 5 then return 20000 end
-    if n <= 10 then return 60000 end
-    return 150000
+-- entire puzzle, deduced from nothing else -- so this generates+verifies
+-- whole candidate solutions (same shape as hitori/nurikabe): build a random
+-- solution, derive its clues, keep it only if it passes the check below.
+--
+-- 1.6.0: no guessing. A grid is kept only if lineSolve() finishes it --
+-- pure line-by-line logic, never "assume this cell, see if it breaks" --
+-- which also proves the solution unique (the search-based uniqueness check
+-- used to accept grids that only trial and error could solve: about 1
+-- 15x15 Easy puzzle in 3, 1 10x10 Easy in 9). Difficulty is how long the
+-- chain of deductions is: the number of passes lineSolve() needs (a pass =
+-- the rows that learned something, then the columns), which must fall in
+-- the level's band below, on a grid drawn at the level's fill density
+-- (fuller grids give long runs that settle many cells at once). Easy used
+-- to be the emptiest grid and Hard the fullest -- the opposite of how hard
+-- they are to reason out -- so the densities are swapped round.
+local DENSITY = { easy = 0.65, medium = 0.55, hard = 0.45 }
+-- [n][difficulty] = { fewest passes, most passes }
+local PASS_BAND = {
+    [5]  = { easy = { 1, 2 }, medium = { 3, 3 }, hard = { 4, math.huge } },
+    [10] = { easy = { 1, 3 }, medium = { 4, 5 }, hard = { 6, math.huge } },
+    [15] = { easy = { 1, 4 }, medium = { 5, 7 }, hard = { 8, math.huge } },
+}
+local MAX_ATTEMPTS      = 400   -- in-band draws; see the fallbacks below
+local FALLBACK_DENSITY  = 0.75  -- ~99% of these grids solve line by line
+local FALLBACK_ATTEMPTS = 100
+
+local function randomGrid(n, density)
+    local g = {}
+    for r = 1, n do
+        g[r] = {}
+        for c = 1, n do g[r][c] = math.random() < density end
+    end
+    return g
+end
+
+local function hasEmptyLine(row_clues, col_clues, n)
+    for i = 1, n do
+        if row_clues[i][1] == 0 or col_clues[i][1] == 0 then return true end
+    end
+    return false
+end
+
+-- How far `passes` falls outside `band` (0 = inside).
+local function bandDistance(passes, band)
+    if passes < band[1] then return band[1] - passes end
+    if passes > band[2] then return passes - band[2] end
+    return 0
 end
 
 -- on_progress (optional): called with a 0..1 fraction as it goes.
+-- Returns how the grid was found, for the specs: "band" (the usual case),
+-- "near" (line-solvable but outside the level's band), "dense" (the denser
+-- fallback) or "full" (the every-cell-filled last resort) -- see the
+-- specs for how often each happens.
 function NonogramBoard:generate(difficulty, on_progress)
     self.difficulty = difficulty or self.difficulty
     local n = self.n
-    local density = self.difficulty == "easy" and 0.45
-                 or self.difficulty == "medium" and 0.55
-                 or 0.65
+    local density = DENSITY[self.difficulty] or DENSITY.medium
+    local bands = PASS_BAND[n] or PASS_BAND[15]
+    local band = bands[self.difficulty] or bands.medium
 
-    local budget = uniquenessNodeBudget(n)
-    local best_solution, best_row_clues, best_col_clues
+    local line_cache = {}   -- for this n only
+    local best, best_rc, best_cc, best_dist, how
 
-    for attempt = 1, 400 do
-        -- 15x15 Easy takes ~10 attempts, the others one or two
-        if on_progress then on_progress(attempt / (attempt + 10)) end
-        local candidate = {}
-        for r = 1, n do
-            candidate[r] = {}
-            for c = 1, n do
-                candidate[r][c] = math.random() < density
-            end
-        end
+    -- Draws are counted, never timed, so a seed always gives the same grid.
+    for attempt = 1, MAX_ATTEMPTS do
+        -- 15x15 Hard takes ~20 attempts, the others a handful
+        if on_progress then on_progress(attempt / (attempt + 20)) end
+        local candidate = randomGrid(n, density)
         local row_clues, col_clues = computeClues(candidate, n)
-
-        local has_no_empty_lines = true
-        for r = 1, n do
-            local has = false
-            for c = 1, n do if candidate[r][c] then has = true; break end end
-            if not has then has_no_empty_lines = false; break end
-        end
-        if has_no_empty_lines then
-            for c = 1, n do
-                local has = false
-                for r = 1, n do if candidate[r][c] then has = true; break end end
-                if not has then has_no_empty_lines = false; break end
+        if not hasEmptyLine(row_clues, col_clues, n) then
+            local solved, passes = lineSolve(row_clues, col_clues, n, line_cache)
+            if solved then
+                local dist = bandDistance(passes, band)
+                if not best or dist < best_dist then
+                    best, best_rc, best_cc, best_dist = candidate, row_clues, col_clues, dist
+                    if dist == 0 then break end
+                end
             end
         end
+    end
+    how = best and (best_dist == 0 and "band" or "near")
 
-        if has_no_empty_lines then
-            if not best_solution then
-                best_solution, best_row_clues, best_col_clues = candidate, row_clues, col_clues
-            end
-            local solutions, exhausted = countSolutions(row_clues, col_clues, n, 2, budget)
-            if solutions == 1 and not exhausted then
-                best_solution, best_row_clues, best_col_clues = candidate, row_clues, col_clues
+    -- Nothing line-solvable at all (not seen in tens of thousands of seeds):
+    -- a fuller grid, then the full grid (every clue is the whole line).
+    if not best then
+        for _ = 1, FALLBACK_ATTEMPTS do
+            local candidate = randomGrid(n, FALLBACK_DENSITY)
+            local row_clues, col_clues = computeClues(candidate, n)
+            if not hasEmptyLine(row_clues, col_clues, n)
+               and lineSolve(row_clues, col_clues, n, line_cache) then
+                best, best_rc, best_cc, how = candidate, row_clues, col_clues, "dense"
                 break
             end
         end
     end
+    if not best then
+        best = randomGrid(n, 2)   -- every cell filled
+        best_rc, best_cc = computeClues(best, n)
+        how = "full"
+    end
 
-    self.solution, self.row_clues, self.col_clues = best_solution, best_row_clues, best_col_clues
+    self.solution, self.row_clues, self.col_clues = best, best_rc, best_cc
 
     self.user        = grid_utils.emptyGrid(n, n, 0)
     self.wrong_marks = grid_utils.emptyBoolGrid(n, n)
     self.undo:clear()
+    return how
 end
 
 function NonogramBoard:setCellState(r, c, state)
@@ -463,5 +594,7 @@ return {
     SIZES         = SIZES,
     -- for the specs
     _countSolutions = countSolutions,
+    _lineSolve      = lineSolve,
+    _PASS_BAND      = PASS_BAND,
     _computeClues   = computeClues,
 }
