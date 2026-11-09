@@ -237,33 +237,11 @@ describe("NonogramBoard", function()
                 end
             end
         end)
-
-        it("generates uniquely solvable puzzles quickly at every size and difficulty", function()
-            local B = Mod.NonogramBoard
-            for _, n in ipairs(Mod.SIZES) do
-                for _, diff in ipairs({ "easy", "medium", "hard" }) do
-                    local worst = 0
-                    for seed = 1, 6 do
-                        math.randomseed(seed * 7919 + n)
-                        local b = B:new{ n = n, difficulty = diff }
-                        local t0 = os.clock()
-                        b:generate(diff)
-                        worst = math.max(worst, os.clock() - t0)
-                        local count, exhausted = Mod._countSolutions(b.row_clues, b.col_clues, n, 2, 3000000)
-                        assert.is_false(exhausted)
-                        assert.are.equal(1, count, ("n=%d %s seed %d not unique"):format(n, diff, seed))
-                    end
-                    -- generous: under 0.02 s on a desktop under LuaJIT (plain
-                    -- Lua runs `bit` through a slow shim, so only time LuaJIT)
-                    if rawget(_G, "jit") then
-                        assert.is_true(worst < 0.5, ("n=%d %s took %.2f s"):format(n, diff, worst))
-                    end
-                end
-            end
-        end)
     end)
 
-    -- 1.6.0: no guessing -- every puzzle solves by line logic alone.
+    -- 1.6.0: no guessing -- the line solver the generator grades with is
+    -- checked against an independent one here; the per-level guarantees
+    -- live in test_difficulty_spec.lua.
     describe("line logic", function()
         -- An independent, cell-by-cell line solver (not the bit-mask one in
         -- board.lua): for each row then each column, list every placement
@@ -352,69 +330,6 @@ describe("NonogramBoard", function()
                     local solved = Mod._lineSolve(rc, cc, n)
                     assert.are.equal(naiveLineSolve(rc, cc, n) ~= nil, solved,
                         ("n=%d seed %d"):format(n, seed))
-                end
-            end
-        end)
-
-        it("every puzzle solves by line logic alone, at every size and difficulty", function()
-            local B = Mod.NonogramBoard
-            for _, n in ipairs(Mod.SIZES) do
-                for _, diff in ipairs({ "easy", "medium", "hard" }) do
-                    for seed = 1, (n == 15 and 15 or 30) do
-                        math.randomseed(seed * 104729 + n)
-                        local b = B:new{ n = n, difficulty = diff }
-                        local how = b:generate(diff)
-                        local tag = ("n=%d %s seed %d"):format(n, diff, seed)
-                        assert.are.equal("band", how, tag)
-                        local g = naiveLineSolve(b.row_clues, b.col_clues, n)
-                        assert.is_truthy(g, tag .. " needs guessing")
-                        for r = 1, n do
-                            for c = 1, n do
-                                assert.are.equal(b.solution[r][c], g[r][c], tag)
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-
-        it("orders the levels by how many passes line logic needs", function()
-            local B = Mod.NonogramBoard
-            for _, n in ipairs(Mod.SIZES) do
-                local prev_max, prev_mean = 0, 0
-                for _, diff in ipairs({ "easy", "medium", "hard" }) do
-                    local band = Mod._PASS_BAND[n][diff]
-                    assert.is_true(band[1] > prev_max, ("n=%d %s band overlaps"):format(n, diff))
-                    prev_max = band[2]
-                    local sum, count = 0, (n == 15 and 15 or 30)
-                    for seed = 1, count do
-                        math.randomseed(seed * 7919 + n)
-                        local b = B:new{ n = n, difficulty = diff }
-                        b:generate(diff)
-                        local solved, passes = Mod._lineSolve(b.row_clues, b.col_clues, n)
-                        assert.is_true(solved)
-                        assert.is_true(passes >= band[1] and passes <= band[2],
-                            ("n=%d %s seed %d: %d passes"):format(n, diff, seed, passes))
-                        sum = sum + passes
-                    end
-                    assert.is_true(sum / count > prev_mean)
-                    prev_mean = sum / count
-                end
-            end
-        end)
-
-        it("gives the same puzzle for the same seed", function()
-            local B = Mod.NonogramBoard
-            for _, n in ipairs(Mod.SIZES) do
-                for _, diff in ipairs({ "easy", "medium", "hard" }) do
-                    local grids = {}
-                    for k = 1, 2 do
-                        math.randomseed(20261104 + n)
-                        local b = B:new{ n = n, difficulty = diff }
-                        b:generate(diff)
-                        grids[k] = b.solution
-                    end
-                    assert.are.same(grids[1], grids[2])
                 end
             end
         end)
