@@ -7,6 +7,7 @@ local function lrequire(name)
     return package.loaded[key]
 end
 
+local ConfirmBox      = require("ui/widget/confirmbox")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -77,11 +78,14 @@ function NonogramScreen:buildLayout()
 
     local title_bar = self:buildTitleBar(_("Nonogram"), function()
         return {
-            { text = _("New game"),            callback = function() self:onNewGame() end },
+            { text = _("New game"),            callback = function()
+                self:confirmDiscardProgress(_("Start a new game? Your progress on this puzzle will be lost."),
+                    _("New game"), function() self:onNewGame() end)
+            end },
             self:makeDailyButtonConfig(),
             { text = self:getGridButtonText(), callback = function() self:openGridMenu() end },
             { text = self:getDiffButtonText(), callback = function() self:openDifficultyMenu() end },
-            { text = _("Show solution"),       callback = function() self:onReveal() end },
+            { text = _("Show solution"),       callback = function() self:confirmReveal() end },
             self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
         }
     end)
@@ -90,8 +94,11 @@ function NonogramScreen:buildLayout()
     local buttons = {
         { id = "mode_button", text = self:getModeButtonText(),
           callback = function() self:toggleMode() end },
-        { text = _("Erase"), callback = function() self:onErase() end },
-        { text = _("Check"), callback = function() self:onCheck() end },
+        { text = _("Erase"), callback = function()
+            self:confirmDiscardProgress(_("Erase all cells on this puzzle?"),
+                _("Erase"), function() self:onErase() end)
+        end },
+        { text = _("Check"), callback = function() self:confirmCheck() end },
         { text = _("Hint"),  callback = function() self:onHint() end },
         { id = "undo_button", text = _("Undo"),
           callback = function() self:onUndo() end },
@@ -179,6 +186,64 @@ function NonogramScreen:onNewGame()
     self:buildLayout()
     UIManager:setDirty(self, function() return "ui", self.dimen end)
     self:updateStatus(_("New game started."))
+end
+
+-- Both "New game" and "Erase" throw away the player's marks in one tap, so ask
+-- first. Skip the prompt when nothing would be lost (empty or solved board) so
+-- it doesn't get in the way. The grid-size and difficulty menus call
+-- onNewGame() directly and stay unconfirmed: choosing from a menu is already
+-- a deliberate step.
+function NonogramScreen:confirmDiscardProgress(text, ok_text, action)
+    if not self:hasUnsolvedProgress() then
+        action()
+        return
+    end
+    UIManager:show(ConfirmBox:new{
+        text        = text,
+        ok_text     = ok_text,
+        ok_callback = action,
+    })
+end
+
+-- Reveal fills in the solution and locks the board, so it ends the puzzle even
+-- when nothing is marked yet. Unlike confirmDiscardProgress, only an already
+-- solved board skips the prompt.
+-- Check doesn't lose anything, but it gives away which cells are wrong, so
+-- ask first in case it was tapped by accident. Nothing to give away on an
+-- empty or solved board, so those skip the prompt.
+function NonogramScreen:confirmCheck()
+    if not self:hasUnsolvedProgress() then
+        self:onCheck()
+        return
+    end
+    UIManager:show(ConfirmBox:new{
+        text        = _("Check your progress? Wrong cells will be marked."),
+        ok_text     = _("Check"),
+        ok_callback = function() self:onCheck() end,
+    })
+end
+
+function NonogramScreen:confirmReveal()
+    if self.board:isSolved() then
+        self:onReveal()
+        return
+    end
+    UIManager:show(ConfirmBox:new{
+        text        = _("Reveal the solution? This ends the puzzle."),
+        ok_text     = _("Reveal"),
+        ok_callback = function() self:onReveal() end,
+    })
+end
+
+function NonogramScreen:hasUnsolvedProgress()
+    if self.board:isSolved() then return false end
+    local n = self.board.n
+    for r = 1, n do
+        for c = 1, n do
+            if self.board.user[r][c] ~= 0 then return true end
+        end
+    end
+    return false
 end
 
 function NonogramScreen:onGridChange(n)
